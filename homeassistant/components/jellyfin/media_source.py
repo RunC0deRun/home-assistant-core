@@ -236,30 +236,15 @@ class JellyfinSource(MediaSource):
 
         if include_children:
             result.children_media_class = MediaClass.ALBUM
-            result.children = await self._build_artist_albums(artist_id)
+            result.children = await self._build_albums(artist_id, "AlbumArtistIds")
 
         return result
 
-    async def _build_artist_albums(self, artist_id: str) -> list[BrowseMediaSource]:
-        """Return all albums credited to an album artist as media sources."""
-        albums = await self._get_items(
-            {
-                "Recursive": "true",
-                "AlbumArtistIds": artist_id,
-                "IncludeItemTypes": ITEM_TYPE_ALBUM,
-            }
-        )
-        return await self._build_sorted_albums(albums)
-
-    async def _build_albums(self, parent_id: str) -> list[BrowseMediaSource]:
-        """Return all albums below parent_id as browsable media sources."""
-        albums = await self._get_children(parent_id, ITEM_TYPE_ALBUM)
-        return await self._build_sorted_albums(albums)
-
-    async def _build_sorted_albums(
-        self, albums: list[dict[str, Any]]
+    async def _build_albums(
+        self, parent_id: str, parent_key: str = "ParentId"
     ) -> list[BrowseMediaSource]:
-        """Return albums sorted by name as browsable media sources."""
+        """Return all albums of a single artist as browsable media sources."""
+        albums = await self._get_children(parent_id, ITEM_TYPE_ALBUM, parent_key)
         albums = sorted(
             albums,
             # Sort by whether an album has an name first, then by name
@@ -529,21 +514,17 @@ class JellyfinSource(MediaSource):
         )
 
     async def _get_children(
-        self, parent_id: str, item_type: str
+        self, parent_id: str, item_type: str, parent_key: str = "ParentId"
     ) -> list[dict[str, Any]]:
         """Return all children for the parent_id whose item type is item_type."""
         params = {
             "Recursive": "true",
-            "ParentId": parent_id,
+            parent_key: parent_id,
             "IncludeItemTypes": item_type,
         }
         if item_type in PLAYABLE_ITEM_TYPES:
             params["Fields"] = ITEM_KEY_MEDIA_SOURCES
 
-        return await self._get_items(params)
-
-    async def _get_items(self, params: dict[str, str]) -> list[dict[str, Any]]:
-        """Return the items of the current user matching params."""
         result = await self.hass.async_add_executor_job(self.api.user_items, "", params)
         return result["Items"]  # type: ignore[no-any-return]
 
