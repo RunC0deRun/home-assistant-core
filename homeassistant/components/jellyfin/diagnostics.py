@@ -29,8 +29,9 @@ async def async_get_config_entry_diagnostics(
         },
         "sessions": [
             {
-                "id": session_id,
+                "id": session_data.get("Id"),
                 "user_id": session_data.get("UserId"),
+                "client_id": client_id,
                 "device_id": session_data.get("DeviceId"),
                 "device_name": session_data.get("DeviceName"),
                 "client_name": session_data.get("Client"),
@@ -39,6 +40,6 @@ async def async_get_config_entry_diagnostics(
                 "now_playing": session_data.get("NowPlayingItem"),
                 "play_state": session_data.get("PlayState"),
             }
-            for session_id, session_data in coordinator.data.items()
+            for client_id, session_data in coordinator.data.items()
         ],
     }

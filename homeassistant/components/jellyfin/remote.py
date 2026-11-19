@@ -29,16 +29,16 @@ async def async_setup_entry(
 
     @callback
     def handle_coordinator_update() -> None:
-        """Add remote per session."""
+        """Add remote per client."""
         entities: list[RemoteEntity] = []
-        for session_id, session_data in coordinator.data.items():
+        for client_id, session_data in coordinator.data.items():
             if (
-                session_id not in coordinator.remote_session_ids
+                client_id not in coordinator.remote_ids
                 and session_data["SupportsRemoteControl"]
             ):
-                entity = JellyfinRemote(coordinator, session_id)
-                LOGGER.debug("Creating remote for session: %s", session_id)
-                coordinator.remote_session_ids.add(session_id)
+                entity = JellyfinRemote(coordinator, client_id)
+                LOGGER.debug("Creating remote for client: %s", client_id)
+                coordinator.remote_ids.add(client_id)
                 entities.append(entity)
         async_add_entities(entities)
 
@@ -53,11 +53,11 @@ class JellyfinRemote(JellyfinClientEntity, RemoteEntity):
     def __init__(
         self,
         coordinator: JellyfinDataUpdateCoordinator,
-        session_id: str,
+        client_id: str,
     ) -> None:
         """Initialize the Jellyfin Remote entity."""
-        super().__init__(coordinator, session_id)
-        self._attr_unique_id = f"{coordinator.server_id}-{session_id}"
+        super().__init__(coordinator, client_id)
+        self._attr_unique_id = f"{coordinator.server_id}-{client_id}"
 
     @property
     @override

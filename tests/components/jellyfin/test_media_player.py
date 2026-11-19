@@ -1,6 +1,7 @@
 """Tests for the Jellyfin media_player platform."""
 
 from datetime import timedelta
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,6 +9,7 @@ from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 from pytest_homeassistant.typing import WebSocketGenerator
 
 from homeassistant.components.jellyfin.const import DOMAIN
+from homeassistant.components.jellyfin.coordinator import get_client_id
 from homeassistant.components.media_player import (
     ATTR_MEDIA_ALBUM_ARTIST,
     ATTR_MEDIA_ALBUM_NAME,
@@ -45,6 +47,49 @@ from homeassistant.util.dt import utcnow
 from . import async_load_json_fixture
 
 
+@pytest.mark.parametrize(
+    ("session", "expected_client_id"),
+    [
+        pytest.param(
+            {
+                "Capabilities": {"SupportsPersistentIdentifier": True},
+                "Client": "Jellyfin Android",
+                "DeviceId": "DEVICE-UUID",
+                "DeviceName": "Living Room",
+            },
+            "DEVICE-UUID",
+            id="persistent",
+        ),
+        pytest.param(
+            {
+                "Capabilities": {"SupportsPersistentIdentifier": False},
+                "Client": "Jellyfin Android",
+                "DeviceId": "RANDOM-UUID",
+                "DeviceName": "Living Room",
+            },
+            "transient:Jellyfin Android:Living Room",
+            id="transient",
+        ),
+        pytest.param(
+            {
+                "Capabilities": {"SupportsPersistentIdentifier": True},
+                "Client": "Jellyfin Chromecast",
+                "DeviceId": "chromecast_RANDOM-UUID",
+                "DeviceName": "Living Room",
+            },
+            "transient:Jellyfin Chromecast:Living Room",
+            id="chromecast",
+        ),
+    ],
+)
+def test_get_client_id(
+    session: dict[str, Any],
+    expected_client_id: str,
+) -> None:
+    """Test stable client identifiers."""
+    assert get_client_id(session) == expected_client_id
+
+
 async def test_media_player(
     hass: HomeAssistant,
     device_registry: dr.DeviceRegistry,
@@ -76,7 +121,7 @@ async def test_media_player(
     assert entry
     assert entry.device_id
     assert entry.entity_category is None
-    assert entry.unique_id == "SERVER-UUID-SESSION-UUID"
+    assert entry.unique_id == "SERVER-UUID-DEVICE-UUID"
 
     assert len(mock_api.sessions.mock_calls) == 1
     async_fire_time_changed(hass, utcnow() + timedelta(seconds=10))
@@ -102,6 +147,7 @@ async def test_media_player(
 
 async def test_media_player_music(
     hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
     entity_registry: er.EntityRegistry,
     init_integration: MockConfigEntry,
     mock_jellyfin: MagicMock,
@@ -138,9 +184,17 @@ async def test_media_player_music(
 
     entry = entity_registry.async_get(state.entity_id)
     assert entry
-    assert entry.device_id is None
+    assert entry.device_id
     assert entry.entity_category is None
-    assert entry.unique_id == "SERVER-UUID-SESSION-UUID-FOUR"
+    assert (
+        entry.unique_id == "SERVER-UUID-transient:Jellyfin Android:JELLYFIN DEVICE FOUR"
+    )
+
+    device = device_registry.async_get(entry.device_id)
+    assert device
+    assert device.identifiers == {
+        (DOMAIN, "transient:Jellyfin Android:JELLYFIN DEVICE FOUR")
+    }
 
 
 async def test_services(
@@ -799,6 +853,72 @@ async def test_new_client_connected(
 
     state = hass.states.get("media_player.jellyfin_device_five")
     assert state
+
+
+@pytest.mark.parametrize(
+    ("session_index", "entity_id", "device_id"),
+    [
+        pytest.param(0, "media_player.jellyfin_device", "DEVICE-UUID", id="persistent"),
+        pytest.param(
+            3, "media_player.jellyfin_device_four", "NEW-DEVICE-UUID", id="transient"
+        ),
+    ],
+)
+async def test_client_reconnect_does_not_create_duplicate_entities(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    init_integration: MockConfigEntry,
+    mock_jellyfin: MagicMock,
+    mock_api: MagicMock,
+    session_index: int,
+    entity_id: str,
+    device_id: str,
+) -> None:
+    """Test reconnecting clients reuse their existing entities."""
+    registry_entries_before = er.async_entries_for_config_entry(
+        entity_registry, init_integration.entry_id
+    )
+    sessions = await async_load_json_fixture(hass, "sessions.json")
+    sessions[session_index] = {
+        **sessions[session_index],
+        "Id": "NEW-SESSION-UUID",
+        "DeviceId": device_id,
+    }
+    mock_api.sessions.return_value = sessions
+
+    async_fire_time_changed(hass, utcnow() + timedelta(seconds=10))
+    await hass.async_block_till_done()
+
+    assert len(
+        er.async_entries_for_config_entry(entity_registry, init_integration.entry_id)
+    ) == len(registry_entries_before)
+    entity = hass.data["entity_components"]["media_player"].get_entity(entity_id)
+    assert entity.session_id == "NEW-SESSION-UUID"
+
+
+@pytest.mark.parametrize("platform", [MP_DOMAIN, "remote"])
+async def test_migrate_session_based_unique_id(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    mock_config_entry: MockConfigEntry,
+    mock_jellyfin: MagicMock,
+    platform: str,
+) -> None:
+    """Test session-based unique IDs are migrated before platform setup."""
+    mock_config_entry.add_to_hass(hass)
+    entity_entry = entity_registry.async_get_or_create(
+        platform,
+        DOMAIN,
+        "SERVER-UUID-SESSION-UUID",
+        config_entry=mock_config_entry,
+    )
+
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    migrated_entry = entity_registry.async_get(entity_entry.entity_id)
+    assert migrated_entry
+    assert migrated_entry.unique_id == "SERVER-UUID-DEVICE-UUID"
 
 
 async def test_capabilities_updated(

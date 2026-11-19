@@ -39,6 +39,12 @@ async def test_remote(
 
     assert state.state == STATE_ON
 
+    remote_entry = entity_registry.async_get(state4.entity_id)
+    media_player_entry = entity_registry.async_get("media_player.jellyfin_device_four")
+    assert remote_entry
+    assert media_player_entry
+    assert remote_entry.device_id == media_player_entry.device_id
+
 
 async def test_services(
     hass: HomeAssistant,

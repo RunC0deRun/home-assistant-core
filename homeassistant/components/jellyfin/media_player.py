@@ -37,13 +37,13 @@ async def async_setup_entry(
 
     @callback
     def handle_coordinator_update() -> None:
-        """Add media player per session."""
+        """Add media player per client."""
         entities: list[MediaPlayerEntity] = []
-        for session_id in coordinator.data:
-            if session_id not in coordinator.session_ids:
-                entity: MediaPlayerEntity = JellyfinMediaPlayer(coordinator, session_id)
-                LOGGER.debug("Creating media player for session: %s", session_id)
-                coordinator.session_ids.add(session_id)
+        for client_id in coordinator.data:
+            if client_id not in coordinator.media_player_ids:
+                entity: MediaPlayerEntity = JellyfinMediaPlayer(coordinator, client_id)
+                LOGGER.debug("Creating media player for client: %s", client_id)
+                coordinator.media_player_ids.add(client_id)
                 entities.append(entity)
         async_add_entities(entities)
 
@@ -58,11 +58,11 @@ class JellyfinMediaPlayer(JellyfinClientEntity, MediaPlayerEntity):
     def __init__(
         self,
         coordinator: JellyfinDataUpdateCoordinator,
-        session_id: str,
+        client_id: str,
     ) -> None:
         """Initialize the Jellyfin Media Player entity."""
-        super().__init__(coordinator, session_id)
-        self._attr_unique_id = f"{coordinator.server_id}-{session_id}"
+        super().__init__(coordinator, client_id)
+        self._attr_unique_id = f"{coordinator.server_id}-{client_id}"
 
         self.now_playing: dict[str, Any] | None = self.session_data.get(
             "NowPlayingItem"

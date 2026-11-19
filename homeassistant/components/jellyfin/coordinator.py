@@ -14,6 +14,16 @@ from .const import CONF_CLIENT_DEVICE_ID, DOMAIN, LOGGER, USER_APP_NAME
 type JellyfinConfigEntry = ConfigEntry[JellyfinDataUpdateCoordinator]
 
 
+def get_client_id(session: dict[str, Any]) -> str:
+    """Return a stable identifier for a Jellyfin client."""
+    device_id: str = session["DeviceId"]
+    if session["Capabilities"].get(
+        "SupportsPersistentIdentifier", False
+    ) and not device_id.startswith("chromecast_"):
+        return device_id
+    return f"transient:{session['Client']}:{session['DeviceName']}"
+
+
 class JellyfinDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     """Data update coordinator for the Jellyfin integration."""
 
@@ -42,8 +52,8 @@ class JellyfinDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, An
         self.client_device_id: str = config_entry.data[CONF_CLIENT_DEVICE_ID]
         self.user_id: str = user_id
 
-        self.session_ids: set[str] = set()
-        self.remote_session_ids: set[str] = set()
+        self.media_player_ids: set[str] = set()
+        self.remote_ids: set[str] = set()
         self.device_ids: set[str] = set()
 
     @override
@@ -56,8 +66,8 @@ class JellyfinDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, An
         if sessions is None:
             return {}
 
-        sessions_by_id: dict[str, dict[str, Any]] = {
-            session["Id"]: session
+        sessions_by_client_id: dict[str, dict[str, Any]] = {
+            get_client_id(session): session
             for session in sessions
             if session["DeviceId"] != self.client_device_id
             and session["Client"] != USER_APP_NAME
@@ -65,6 +75,6 @@ class JellyfinDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, An
             and session["DeviceId"] != self.server_id
         }
 
-        self.device_ids = {session["DeviceId"] for session in sessions_by_id.values()}
+        self.device_ids = set(sessions_by_client_id)
 
-        return sessions_by_id
+        return sessions_by_client_id

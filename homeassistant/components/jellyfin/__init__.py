@@ -2,14 +2,18 @@
 
 from typing import Any
 
-from homeassistant.const import CONF_URL
+from homeassistant.const import CONF_URL, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryNotReady,
     HomeAssistantError,
 )
-from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers import (
+    config_validation as cv,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.typing import ConfigType
 
 from .client_wrapper import CannotConnect, InvalidAuth, create_client, validate_input
@@ -62,10 +66,62 @@ async def async_setup_entry(hass: HomeAssistant, entry: JellyfinConfigEntry) -> 
         sw_version=coordinator.server_version,
     )
 
+    _migrate_client_entity_unique_ids(hass, entry, coordinator)
+
     entry.runtime_data = coordinator
     entry.async_on_unload(client.stop)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+
+def _migrate_client_entity_unique_ids(
+    hass: HomeAssistant,
+    entry: JellyfinConfigEntry,
+    coordinator: JellyfinDataUpdateCoordinator,
+) -> None:
+    """Migrate session-based client entity unique IDs."""
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+    client_ids_by_session_id = {
+        session["Id"]: client_id for client_id, session in coordinator.data.items()
+    }
+    unique_id_prefix = f"{coordinator.server_id}-"
+
+    for entity_entry in er.async_entries_for_config_entry(
+        entity_registry, entry.entry_id
+    ):
+        if entity_entry.domain not in (Platform.MEDIA_PLAYER, Platform.REMOTE):
+            continue
+        if not entity_entry.unique_id.startswith(unique_id_prefix):
+            continue
+
+        old_id = entity_entry.unique_id.removeprefix(unique_id_prefix)
+        client_id = client_ids_by_session_id.get(old_id)
+
+        if client_id is None and entity_entry.device_id is not None:
+            device_entry = device_registry.async_get(entity_entry.device_id)
+            if device_entry is not None:
+                client_identifiers = {
+                    identifier
+                    for domain, identifier in device_entry.identifiers
+                    if domain == DOMAIN and identifier != coordinator.server_id
+                }
+                if len(client_identifiers) == 1:
+                    client_id = client_identifiers.pop()
+
+        if client_id is None:
+            continue
+
+        new_unique_id = f"{unique_id_prefix}{client_id}"
+        if new_unique_id == entity_entry.unique_id:
+            continue
+        if entity_registry.async_get_entity_id(
+            entity_entry.domain, DOMAIN, new_unique_id
+        ):
+            continue
+        entity_registry.async_update_entity(
+            entity_entry.entity_id, new_unique_id=new_unique_id
+        )
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: JellyfinConfigEntry) -> None:
